@@ -1,4 +1,5 @@
 /* Copyright (c) 2018, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2019 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -43,14 +44,14 @@
 #define PWM_PERIOD_DEFAULT_NS		1000000
 
 struct pwm_setting {
-	u64	pre_period_ns;
-	u64	period_ns;
-	u64	duty_ns;
+	u32	pre_period_ns;
+	u32	period_ns;
+	u32	duty_ns;
 };
 
 struct led_setting {
-	u64			on_ms;
-	u64			off_ms;
+	u32			on_ms;
+	u32			off_ms;
 	enum led_brightness	brightness;
 	bool			blink;
 	bool			breath;
@@ -164,16 +165,24 @@ static int __tri_led_set(struct qpnp_led_dev *led)
 
 static int qpnp_tri_led_set(struct qpnp_led_dev *led)
 {
-	u64 on_ms, off_ms, period_ns, duty_ns;
+	u32 on_ms, off_ms, period_ns, duty_ns;
 	enum led_brightness brightness = led->led_setting.brightness;
 	int rc = 0;
 
 	if (led->led_setting.blink) {
 		on_ms = led->led_setting.on_ms;
 		off_ms = led->led_setting.off_ms;
+		if (on_ms > INT_MAX / NSEC_PER_MSEC)
+			duty_ns = INT_MAX - 1;
+		else
+			duty_ns = on_ms * NSEC_PER_MSEC;
 
-		duty_ns = on_ms * NSEC_PER_MSEC;
-		period_ns = (on_ms + off_ms) * NSEC_PER_MSEC;
+		if (on_ms + off_ms > INT_MAX / NSEC_PER_MSEC) {
+			period_ns = INT_MAX;
+			duty_ns = (period_ns / (on_ms + off_ms)) * on_ms;
+		} else {
+			period_ns = (on_ms + off_ms) * NSEC_PER_MSEC;
+		}
 
 		if (period_ns < duty_ns && duty_ns != 0)
 			period_ns = duty_ns + 1;
@@ -183,14 +192,15 @@ static int qpnp_tri_led_set(struct qpnp_led_dev *led)
 
 		if (brightness == LED_OFF)
 			duty_ns = 0;
-
-		duty_ns = period_ns * brightness;
-		do_div(duty_ns, LED_FULL);
+		else if (period_ns > INT_MAX / brightness)
+			duty_ns = (period_ns / LED_FULL) * brightness;
+		else
+			duty_ns = (period_ns * brightness) / LED_FULL;
 
 		if (period_ns < duty_ns && duty_ns != 0)
 			period_ns = duty_ns + 1;
 	}
-	dev_dbg(led->chip->dev, "PWM settings for %s led: period = %lluns, duty = %lluns\n",
+	dev_dbg(led->chip->dev, "PWM settings for %s led: period = %dns, duty = %dns\n",
 				led->cdev.name, period_ns, duty_ns);
 
 	led->pwm_setting.duty_ns = duty_ns;
@@ -356,7 +366,7 @@ static int qpnp_tri_led_register(struct qpnp_tri_led_chip *chip)
 		led = &chip->leds[i];
 		mutex_init(&led->lock);
 		led->cdev.name = led->label;
-		led->cdev.max_brightness = LED_FULL;
+		led->cdev.max_brightness = 45;
 		led->cdev.brightness_set_blocking = qpnp_tri_led_set_brightness;
 		led->cdev.brightness_get = qpnp_tri_led_get_brightness;
 		led->cdev.blink_set = qpnp_tri_led_set_blink;
