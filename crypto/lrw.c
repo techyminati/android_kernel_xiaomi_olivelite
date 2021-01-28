@@ -132,12 +132,7 @@ static inline int get_index128(be128 *block)
 		return x + ffz(val);
 	}
 
-	/*
-	 * If we get here, then x == 128 and we are incrementing the counter
-	 * from all ones to all zeros. This means we must return index 127, i.e.
-	 * the one corresponding to key2*{ 1,...,1 }.
-	 */
-	return 127;
+	return x;
 }
 
 static int crypt(struct blkcipher_desc *d,
@@ -377,7 +372,7 @@ out_put_alg:
 	return inst;
 }
 
-static void free_inst(struct crypto_instance *inst)
+static void free(struct crypto_instance *inst)
 {
 	crypto_drop_spawn(crypto_instance_ctx(inst));
 	kfree(inst);
@@ -386,7 +381,7 @@ static void free_inst(struct crypto_instance *inst)
 static struct crypto_template crypto_tmpl = {
 	.name = "lrw",
 	.alloc = alloc,
-	.free = free_inst,
+	.free = free,
 	.module = THIS_MODULE,
 };
 
