@@ -305,7 +305,6 @@ enum power_supply_property {
 	POWER_SUPPLY_PROP_FCC_STEPPER_ENABLE,
 	POWER_SUPPLY_PROP_CC_SOC,
 	POWER_SUPPLY_PROP_QG_VBMS_MODE,
-	POWER_SUPPLY_PROP_REAL_CAPACITY,
 	/* Local extensions of type int64_t */
 	POWER_SUPPLY_PROP_CHARGE_COUNTER_EXT,
 	/* Properties of type `const char *' */
@@ -314,6 +313,9 @@ enum power_supply_property {
 	POWER_SUPPLY_PROP_SERIAL_NUMBER,
 	POWER_SUPPLY_PROP_BATTERY_TYPE,
 	POWER_SUPPLY_PROP_CYCLE_COUNTS,
+	POWER_SUPPLY_PROP_BATTERY_ID,
+	POWER_SUPPLY_PROP_FVCOMP,
+	POWER_SUPPLY_PROP_HVDCP_TYPE3,
 };
 
 enum power_supply_type {
@@ -446,7 +448,6 @@ struct power_supply {
 	spinlock_t changed_lock;
 	bool changed;
 	bool initialized;
-	bool removing;
 	atomic_t use_cnt;
 #ifdef CONFIG_THERMAL
 	struct thermal_zone_device *tzd;

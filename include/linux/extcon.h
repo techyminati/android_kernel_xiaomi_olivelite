@@ -317,7 +317,7 @@ extern struct extcon_dev *extcon_get_edev_by_phandle(struct device *dev,
 extern const char *extcon_get_edev_name(struct extcon_dev *edev);
 
 extern int extcon_blocking_sync(struct extcon_dev *edev, unsigned int id,
-							u8 val);
+							bool val);
 #else /* CONFIG_EXTCON */
 static inline int extcon_dev_register(struct extcon_dev *edev)
 {

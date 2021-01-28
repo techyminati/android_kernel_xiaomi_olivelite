@@ -67,7 +67,6 @@ enum gsi_ep_op {
 	GSI_EP_OP_SET_CLR_BLOCK_DBL,
 	GSI_EP_OP_CHECK_FOR_SUSPEND,
 	GSI_EP_OP_DISABLE,
-	GSI_EP_OP_UPDATE_DB,
 };
 
 /*
@@ -148,7 +147,6 @@ struct gsi_channel_info {
  *     by adding a zero length packet as needed;
  * @short_not_ok: When reading data, makes short packets be
  *     treated as errors (queue stops advancing till cleanup).
- * @dma_mapped: Indicates if request has been mapped to DMA (internal)
  * @complete: Function called when request completes, so this request and
  *	its buffer may be re-used.  The function will always be called with
  *	interrupts disabled, and it must not sleep.
@@ -205,7 +203,6 @@ struct usb_request {
 	unsigned		no_interrupt:1;
 	unsigned		zero:1;
 	unsigned		short_not_ok:1;
-	unsigned		dma_mapped:1;
 
 	void			(*complete)(struct usb_ep *ep,
 					struct usb_request *req);
