@@ -1,4 +1,5 @@
 /* Copyright (c) 2018-2019 The Linux Foundation. All rights reserved.
+ * Copyright (C) 2019 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -39,6 +40,23 @@
 #include "qg-soc.h"
 #include "qg-battery-profile.h"
 #include "qg-defs.h"
+
+#ifdef PROJECT_PINE
+#define SUNWODA_ID_MAX 82000
+#define SUNWODA_ID_MIN 73500
+#define NVT_ID_MAX 44000
+#define NVT_ID_MIN 39000
+#define COSLIGHT_ID_MAX 54000
+#define COSLIGHT_ID_MIN 48000
+#else
+#define SUNWODA_ID_MAX 350000
+#define SUNWODA_ID_MIN 315000
+#define COSLIGHT_ID_MAX 107000
+#define COSLIGHT_ID_MIN 96000
+#endif
+
+#define HOT_FVCOMP_4100MV 0x1D		/*JEITA_FVCOMP_HOT=(4390-4100)/10*/
+#define HOT_FVCOMP_4000MV 0x27		/*JEITA_FVCOMP_HOT=(4390-4000)/10*/
 
 static int qg_debug_mask;
 module_param_named(
@@ -1076,7 +1094,8 @@ static void process_udata_work(struct work_struct *work)
 	if (!chip->dt.esr_disable)
 		qg_store_esr_params(chip);
 
-	qg_dbg(chip, QG_DEBUG_STATUS, "udata update: batt_soc=%d cc_soc=%d full_soc=%d qg_esr=%d\n",
+	pr_info("%s:udata update: batt_soc=%d cc_soc=%d full_soc=%d qg_esr=%d\n",
+		__func__,
 		(chip->batt_soc != INT_MIN) ? chip->batt_soc : -EINVAL,
 		(chip->cc_soc != INT_MIN) ? chip->cc_soc : -EINVAL,
 		chip->full_soc, chip->esr_last);
@@ -1223,7 +1242,6 @@ static irqreturn_t qg_good_ocv_handler(int irq, void *data)
 	u8 status = 0;
 	u32 ocv_uv = 0, ocv_raw = 0;
 	struct qpnp_qg *chip = data;
-	unsigned long rtc_sec = 0;
 
 	qg_dbg(chip, QG_DEBUG_IRQ, "IRQ triggered\n");
 
@@ -1244,8 +1262,6 @@ static irqreturn_t qg_good_ocv_handler(int irq, void *data)
 		goto done;
 	}
 
-	get_rtc_time(&rtc_sec);
-	chip->kdata.fifo_time = (u32)rtc_sec;
 	chip->kdata.param[QG_GOOD_OCV_UV].data = ocv_uv;
 	chip->kdata.param[QG_GOOD_OCV_UV].valid = true;
 
@@ -1547,15 +1563,6 @@ static int qg_get_battery_capacity(struct qpnp_qg *chip, int *soc)
 	return 0;
 }
 
-static int qg_get_battery_capacity_real(struct qpnp_qg *chip, int *soc)
-{
-	mutex_lock(&chip->soc_lock);
-	*soc = chip->msoc;
-	mutex_unlock(&chip->soc_lock);
-
-	return 0;
-}
-
 static int qg_get_charge_counter(struct qpnp_qg *chip, int *charge_counter)
 {
 	int rc, cc_soc = 0;
@@ -1716,9 +1723,6 @@ static int qg_psy_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CAPACITY:
 		rc = qg_get_battery_capacity(chip, &pval->intval);
 		break;
-	case POWER_SUPPLY_PROP_REAL_CAPACITY:
-		rc = qg_get_battery_capacity_real(chip, &pval->intval);
-		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		rc = qg_get_battery_voltage(chip, &pval->intval);
 		break;
@@ -1810,6 +1814,9 @@ static int qg_psy_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CC_SOC:
 		rc = qg_get_cc_soc(chip, &pval->intval);
 		break;
+	case POWER_SUPPLY_PROP_BATTERY_ID:
+		pval->intval = chip->batt_id;
+		break;
 	case POWER_SUPPLY_PROP_QG_VBMS_MODE:
 		pval->intval = !!chip->dt.qg_vbms_mode;
 		break;
@@ -1838,7 +1845,6 @@ static int qg_property_is_writeable(struct power_supply *psy,
 
 static enum power_supply_property qg_psy_props[] = {
 	POWER_SUPPLY_PROP_CAPACITY,
-	POWER_SUPPLY_PROP_REAL_CAPACITY,
 	POWER_SUPPLY_PROP_TEMP,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_VOLTAGE_OCV,
@@ -1865,6 +1871,7 @@ static enum power_supply_property qg_psy_props[] = {
 	POWER_SUPPLY_PROP_ESR_NOMINAL,
 	POWER_SUPPLY_PROP_SOH,
 	POWER_SUPPLY_PROP_CC_SOC,
+	POWER_SUPPLY_PROP_BATTERY_ID,
 	POWER_SUPPLY_PROP_QG_VBMS_MODE,
 };
 
@@ -1900,9 +1907,8 @@ static int qg_charge_full_update(struct qpnp_qg *chip)
 	if (rc < 0 || prop.intval < 0) {
 		pr_debug("Failed to get recharge-soc\n");
 		recharge_soc = DEFAULT_RECHARGE_SOC;
-	} else {
-		recharge_soc = prop.intval;
 	}
+	recharge_soc = prop.intval;
 	chip->recharge_soc = recharge_soc;
 
 	qg_dbg(chip, QG_DEBUG_STATUS, "msoc=%d health=%d charge_full=%d charge_done=%d\n",
@@ -1911,14 +1917,26 @@ static int qg_charge_full_update(struct qpnp_qg *chip)
 	if (chip->charge_done && !chip->charge_full) {
 		if (chip->msoc >= 99 && health == POWER_SUPPLY_HEALTH_GOOD) {
 			chip->charge_full = true;
-			qg_dbg(chip, QG_DEBUG_STATUS, "Setting charge_full (0->1) @ msoc=%d\n",
-					chip->msoc);
-		} else if (health != POWER_SUPPLY_HEALTH_GOOD) {
+			pr_info("%s:Setting charge_full (0->1) @ msoc=%d\n",
+					__func__, chip->msoc);
+		} else if (health == POWER_SUPPLY_HEALTH_WARM) {
 			/* terminated in JEITA */
-			qg_dbg(chip, QG_DEBUG_STATUS, "Terminated charging @ msoc=%d\n",
-					chip->msoc);
+			prop.intval = HOT_FVCOMP_4000MV;
+			pr_err("set status 4000mv\n");
+			rc = power_supply_set_property(chip->batt_psy,
+					POWER_SUPPLY_PROP_FVCOMP, &prop);
+			if (rc < 0) {
+				pr_err("Failed to get battery health, rc=%d\n", rc);
+				goto out;
+			}
+			pr_info("%s:Terminated charging @ msoc=%d\n",
+					__func__, chip->msoc);
 		}
+#if defined(PROJECT_OLIVE) || defined(PROJECT_OLIVELITE)
+	} else if ((!chip->charge_done || chip->msoc < recharge_soc)
+#else
 	} else if ((!chip->charge_done || chip->msoc <= recharge_soc)
+#endif
 				&& chip->charge_full) {
 
 		bool usb_present = is_usb_present(chip);
@@ -2126,6 +2144,7 @@ static void qg_status_change_work(struct work_struct *work)
 			struct qpnp_qg, qg_status_change_work);
 	union power_supply_propval prop = {0, };
 	int rc = 0, batt_temp = 0, batt_soc_32b = 0;
+	int health = 0, vol = 0;
 
 	if (!is_batt_available(chip)) {
 		pr_debug("batt-psy not available\n");
@@ -2186,6 +2205,33 @@ static void qg_status_change_work(struct work_struct *work)
 				chip->usb_present, false);
 		}
 	}
+
+	rc = power_supply_get_property(chip->batt_psy,
+			POWER_SUPPLY_PROP_HEALTH, &prop);
+	if (rc < 0) {
+		pr_err("Failed to get battery health, rc=%d\n", rc);
+	}
+	health = prop.intval;
+
+	rc = power_supply_get_property(chip->batt_psy,
+			POWER_SUPPLY_PROP_VOLTAGE_NOW, &prop);
+	if (rc < 0) {
+		pr_err("Failed to get battery health, rc=%d\n", rc);
+	}
+	vol = prop.intval;
+
+	if (chip->charge_status == 1 &&
+		vol < 4000000 && health == POWER_SUPPLY_HEALTH_WARM) {
+		prop.intval = HOT_FVCOMP_4100MV;
+		pr_err("set status 4100mv\n");
+		rc = power_supply_set_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_FVCOMP, &prop);
+		if (rc < 0) {
+			pr_err("Failed to get battery health, rc=%d\n", rc);
+			goto out;
+		}
+	}
+
 	rc = qg_charge_full_update(chip);
 	if (rc < 0)
 		pr_err("Failed in charge_full_update, rc=%d\n", rc);
@@ -2252,12 +2298,6 @@ static ssize_t qg_device_read(struct file *file, char __user *buf, size_t count,
 	int rc;
 	struct qpnp_qg *chip = file->private_data;
 	unsigned long data_size = sizeof(chip->kdata);
-
-	if (count < data_size) {
-		pr_err("Invalid datasize %lu, expected lesser then %zu\n",
-							data_size, count);
-		return -EINVAL;
-	}
 
 	/* non-blocking access, return */
 	if (!chip->data_ready && (file->f_flags & O_NONBLOCK))
@@ -2471,9 +2511,48 @@ static int get_batt_id_ohm(struct qpnp_qg *chip, u32 *batt_id_ohm)
 
 static int qg_load_battery_profile(struct qpnp_qg *chip)
 {
+	int match = 0;
 	struct device_node *node = chip->dev->of_node;
 	struct device_node *batt_node, *profile_node;
 	int rc;
+
+	pr_err("batt_id_ohm=%d\n", chip->batt_id_ohm);
+
+#ifdef PROJECT_PINE
+	if(chip->batt_id_ohm >= SUNWODA_ID_MIN && chip->batt_id_ohm <= SUNWODA_ID_MAX) {
+		match = 1;
+		chip->batt_id = 1;
+		printk("SUNWODA match succ.\n");
+	} else if(chip->batt_id_ohm >= NVT_ID_MIN && chip->batt_id_ohm <= NVT_ID_MAX) {
+		match = 1;
+		chip->batt_id = 2;
+		printk("NVT match succ.\n");
+	} else if(chip->batt_id_ohm >= COSLIGHT_ID_MIN && chip->batt_id_ohm <= COSLIGHT_ID_MAX) {
+		match = 1;
+		chip->batt_id = 3;
+		printk("COSLIGHT match succ.\n");
+	}
+#else
+	if (chip->batt_id_ohm >= SUNWODA_ID_MIN && chip->batt_id_ohm <= SUNWODA_ID_MAX) {
+		match = 1;
+		chip->batt_id = 1;
+		printk("SUNWODA match succ.\n");
+	} else if (chip->batt_id_ohm >= COSLIGHT_ID_MIN && chip->batt_id_ohm <= COSLIGHT_ID_MAX) {
+		match = 1;
+		chip->batt_id = 2;
+		printk("COSLIGHT match succ.\n");
+	}
+#endif
+
+	if(match == 0){
+		rc = get_batt_id_ohm(chip, &chip->batt_id_ohm);
+		if (rc < 0) {
+			pr_err("Failed to detect batt_id rc=%d\n", rc);
+			chip->profile_loaded = false;
+		}
+		chip->batt_id = 0;
+	}
+	pr_err("batt_id=%d\n", chip->batt_id_ohm);
 
 	batt_node = of_find_node_by_name(node, "qcom,battery-data");
 	if (!batt_node) {
@@ -2545,6 +2624,7 @@ static int qg_setup_battery(struct qpnp_qg *chip)
 		if (rc < 0) {
 			pr_err("Failed to detect batt_id rc=%d\n", rc);
 			chip->profile_loaded = false;
+			chip->batt_id = 0;
 		} else {
 			rc = qg_load_battery_profile(chip);
 			if (rc < 0) {
@@ -2558,7 +2638,7 @@ static int qg_setup_battery(struct qpnp_qg *chip)
 		}
 	}
 
-	qg_dbg(chip, QG_DEBUG_PROFILE, "battery_missing=%d batt_id_ohm=%d Ohm profile_loaded=%d profile=%s\n",
+	pr_err("battery_missing=%d batt_id_ohm=%d Ohm profile_loaded=%d profile=%s\n",
 			chip->battery_missing, chip->batt_id_ohm,
 			chip->profile_loaded, chip->bp.batt_type_str);
 
@@ -3618,7 +3698,6 @@ static int process_resume(struct qpnp_qg *chip)
 	u8 status2 = 0, rt_status = 0, val = 0;
 	u32 ocv_uv = 0, ocv_raw = 0;
 	int rc;
-	unsigned long rtc_sec = 0;
 
 	/* skip if profile is not loaded */
 	if (!chip->profile_loaded)
@@ -3639,8 +3718,6 @@ static int process_resume(struct qpnp_qg *chip)
 
 		 /* Clear suspend data as there has been a GOOD OCV */
 		memset(&chip->kdata, 0, sizeof(chip->kdata));
-		get_rtc_time(&rtc_sec);
-		chip->kdata.fifo_time = (u32)rtc_sec;
 		chip->kdata.param[QG_GOOD_OCV_UV].data = ocv_uv;
 		chip->kdata.param[QG_GOOD_OCV_UV].valid = true;
 		chip->suspend_data = false;
