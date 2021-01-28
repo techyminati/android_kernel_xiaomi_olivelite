@@ -2,6 +2,7 @@
  *  linux/arch/arm/kernel/setup.c
  *
  *  Copyright (C) 1995-2001 Russell King
+ *  Copyright (C) 2019 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -62,6 +63,7 @@
 #include <asm/unwind.h>
 #include <asm/memblock.h>
 #include <asm/virt.h>
+#include <asm/bootinfo.h>
 
 #include "atags.h"
 
@@ -124,11 +126,6 @@ EXPORT_SYMBOL(cold_boot);
 
 #ifdef MULTI_CPU
 struct processor processor __ro_after_init;
-#if defined(CONFIG_BIG_LITTLE) && defined(CONFIG_HARDEN_BRANCH_PREDICTOR)
-struct processor *cpu_vtable[NR_CPUS] = {
-	[0] = &processor,
-};
-#endif
 #endif
 #ifdef MULTI_TLB
 struct cpu_tlb_fns cpu_tlb __ro_after_init;
@@ -715,36 +712,29 @@ static void __init smp_build_mpidr_hash(void)
 }
 #endif
 
-/*
- * locate processor in the list of supported processor types.  The linker
- * builds this table for us from the entries in arch/arm/mm/proc-*.S
- */
-struct proc_info_list *lookup_processor(u32 midr)
-{
-	struct proc_info_list *list = lookup_processor_type(midr);
-
-	if (!list) {
-		pr_err("CPU%u: configuration botched (ID %08x), CPU halted\n",
-		       smp_processor_id(), midr);
-		while (1)
-		/* can't use cpu_relax() here as it may require MMU setup */;
-	}
-
-	return list;
-}
-
 static void __init setup_processor(void)
 {
-	unsigned int midr;
 	struct proc_info_list *list;
 
+	/*
+	 * locate processor in the list of supported processor
+	 * types.  The linker builds this table for us from the
+	 * entries in arch/arm/mm/proc-*.S
+	 */
 	arm_init_bp_hardening();
-	midr = read_cpuid_id();
-	list = lookup_processor(midr);
+	list = lookup_processor_type(read_cpuid_id());
+	if (!list) {
+		pr_err("CPU configuration botched (ID %08x), unable to continue.\n",
+		       read_cpuid_id());
+		while (1);
+	}
+
 	cpu_name = list->cpu_name;
 	__cpu_architecture = __get_cpu_architecture();
 
-	init_proc_vtable(list->proc);
+#ifdef MULTI_CPU
+	processor = *list->proc;
+#endif
 #ifdef MULTI_TLB
 	cpu_tlb = *list->tlb;
 #endif
@@ -756,7 +746,7 @@ static void __init setup_processor(void)
 #endif
 
 	pr_info("CPU: %s [%08x] revision %d (ARMv%s), cr=%08lx\n",
-		list->cpu_name, midr, midr & 15,
+		cpu_name, read_cpuid_id(), read_cpuid_id() & 15,
 		proc_arch[cpu_architecture()], get_cr());
 
 	snprintf(init_utsname()->machine, __NEW_UTS_LEN + 1, "%s%c",
@@ -954,6 +944,14 @@ static void __init request_standard_resources(const struct machine_desc *mdesc)
 	if (mdesc->reserve_lp2)
 		request_resource(&ioport_resource, &lp2);
 }
+
+#ifdef CONFIG_OF_FLATTREE
+void __init early_init_dt_setup_pureason_arch(unsigned long pu_reason)
+{
+	set_powerup_reason(pu_reason);
+	pr_info("Powerup reason=0x%x\n", get_powerup_reason());
+}
+#endif
 
 #if defined(CONFIG_VGA_CONSOLE) || defined(CONFIG_DUMMY_CONSOLE) || \
     defined(CONFIG_EFI)

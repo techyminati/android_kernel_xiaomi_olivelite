@@ -491,8 +491,12 @@ static void __init map_pages(unsigned long start_vaddr,
 						pte = pte_mkhuge(pte);
 				}
 
-				if (address >= end_paddr)
-					break;
+				if (address >= end_paddr) {
+					if (force)
+						break;
+					else
+						pte_val(pte) = 0;
+				}
 
 				set_pte(pg_table, pte);
 
@@ -604,7 +608,7 @@ void __init mem_init(void)
 			> BITS_PER_LONG);
 
 	high_memory = __va((max_pfn << PAGE_SHIFT));
-	set_max_mapnr(max_low_pfn);
+	set_max_mapnr(page_to_pfn(virt_to_page(high_memory - 1)) + 1);
 	free_all_bootmem();
 
 #ifdef CONFIG_PA11

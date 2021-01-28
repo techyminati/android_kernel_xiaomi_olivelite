@@ -2,6 +2,7 @@
  *  linux/arch/arm/mm/mmu.c
  *
  *  Copyright (C) 1995-2005 Russell King
+ *  Copyright (C) 2019 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -1122,7 +1123,7 @@ void __init debug_ll_io_init(void)
 #endif
 
 static void * __initdata vmalloc_min =
-	(void *)(VMALLOC_END - (240 << 20) - VMALLOC_OFFSET);
+	(void *)(VMALLOC_END - (400 << 20) - VMALLOC_OFFSET);
 
 /*
  * vmalloc=size forces the vmalloc area to be exactly 'size'
@@ -1168,28 +1169,9 @@ void __init adjust_lowmem_bounds(void)
 	 */
 	vmalloc_limit = (u64)(uintptr_t)vmalloc_min - PAGE_OFFSET + PHYS_OFFSET;
 
-	/*
-	 * The first usable region must be PMD aligned. Mark its start
-	 * as MEMBLOCK_NOMAP if it isn't
-	 */
-	for_each_memblock(memory, reg) {
-		if (!memblock_is_nomap(reg)) {
-			if (!IS_ALIGNED(reg->base, PMD_SIZE)) {
-				phys_addr_t len;
-
-				len = round_up(reg->base, PMD_SIZE) - reg->base;
-				memblock_mark_nomap(reg->base, len);
-			}
-			break;
-		}
-	}
-
 	for_each_memblock(memory, reg) {
 		phys_addr_t block_start = reg->base;
 		phys_addr_t block_end = reg->base + reg->size;
-
-		if (memblock_is_nomap(reg))
-			continue;
 
 		if (reg->base < vmalloc_limit) {
 			if (block_end > lowmem_limit)
@@ -1672,13 +1654,7 @@ static noinline void __init split_pmd(pmd_t *pmd, unsigned long addr,
 	pte = start_pte;
 
 	do {
-		if (((unsigned long)_stext <= addr) &&
-			(addr < (unsigned long)__init_end))
-			set_pte_ext(pte, pfn_pte(pfn,
-				mem_types[MT_MEMORY_RWX].prot_pte), 0);
-		else
-			set_pte_ext(pte, pfn_pte(pfn,
-				mem_types[MT_MEMORY_RW].prot_pte), 0);
+		set_pte_ext(pte, pfn_pte(pfn, type->prot_pte), 0);
 		pfn++;
 	} while (pte++, addr += PAGE_SIZE, addr != end);
 

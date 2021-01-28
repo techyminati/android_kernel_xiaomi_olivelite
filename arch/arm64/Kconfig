@@ -748,6 +748,13 @@ config ARM64_DMA_IOMMU_ALIGNMENT
 
 endif
 
+config BOOT_INFO
+	bool "Boot information from bootloader"
+	default y
+	help
+	  On embedded linux device, we try to collect more information from
+	  bootloader to kernel. eg. powerup reason.
+
 config SECCOMP
 	bool "Enable seccomp to safely compute untrusted bytecode"
 	---help---
@@ -801,13 +808,6 @@ config XEN
 	select PARAVIRT
 	help
 	  Say Y if you want to run Linux in a Virtual Machine on Xen on ARM64.
-
-config OKL4_GUEST
-	bool "OKL4 Hypervisor guest support"
-	depends on ARM64 && OF
-	default n
-	help
-	  Say Y if you want to run Linux as a guest of the OKL4 hypervisor
 
 config FORCE_MAX_ZONEORDER
 	int
@@ -871,15 +871,6 @@ config PSCI_BP_HARDENING
 	  branch prediction attacks.
 
 	  If unsure, say N.
-
-config ARM64_SSBD
-	bool "Speculative Store Bypass Disable" if EXPERT
-	default y
-	help
-	  This enables mitigation of the bypassing of previous stores
-	  by speculative loads.
-
-	  If unsure, say Y.
 
 menuconfig ARMV8_DEPRECATED
 	bool "Emulate deprecated/obsolete ARMv8 instructions"
@@ -1263,10 +1254,6 @@ config COMPAT
 config SYSVIPC_COMPAT
 	def_bool y
 	depends on COMPAT && SYSVIPC
-
-config KEYS_COMPAT
-	def_bool y
-	depends on COMPAT && KEYS
 
 endmenu
 
