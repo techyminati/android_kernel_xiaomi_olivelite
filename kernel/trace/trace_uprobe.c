@@ -150,14 +150,7 @@ static void FETCH_FUNC_NAME(memory, string)(struct pt_regs *regs,
 
 	ret = strncpy_from_user(dst, src, maxlen);
 	if (ret == maxlen)
-		dst[ret - 1] = '\0';
-	else if (ret >= 0)
-		/*
-		 * Include the terminating null byte. In this case it
-		 * was copied by strncpy_from_user but not accounted
-		 * for in ret.
-		 */
-		ret++;
+		dst[--ret] = '\0';
 
 	if (ret < 0) {	/* Failed to fetch string */
 		((u8 *)get_rloc_data(dest))[0] = '\0';
@@ -614,7 +607,7 @@ static int probes_seq_show(struct seq_file *m, void *v)
 
 	/* Don't print "0x  (null)" when offset is 0 */
 	if (tu->offset) {
-		seq_printf(m, "0x%px", (void *)tu->offset);
+		seq_printf(m, "0x%p", (void *)tu->offset);
 	} else {
 		switch (sizeof(void *)) {
 		case 4:
@@ -976,7 +969,7 @@ probe_event_disable(struct trace_uprobe *tu, struct trace_event_file *file)
 
 		list_del_rcu(&link->list);
 		/* synchronize with u{,ret}probe_trace_func */
-		synchronize_rcu();
+		synchronize_sched();
 		kfree(link);
 
 		if (!list_empty(&tu->tp.files))
@@ -1119,12 +1112,13 @@ static void __uprobe_perf_func(struct trace_uprobe *tu,
 {
 	struct trace_event_call *call = &tu->tp.call;
 	struct uprobe_trace_entry_head *entry;
+	struct bpf_prog *prog = call->prog;
 	struct hlist_head *head;
 	void *data;
 	int size, esize;
 	int rctx;
 
-	if (bpf_prog_array_valid(call) && !trace_call_bpf(call, regs))
+	if (prog && !trace_call_bpf(prog, regs))
 		return;
 
 	esize = SIZEOF_TRACE_ENTRY(is_ret_probe(tu));

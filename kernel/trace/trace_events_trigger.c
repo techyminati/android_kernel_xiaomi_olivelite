@@ -126,10 +126,9 @@ static void *trigger_next(struct seq_file *m, void *t, loff_t *pos)
 {
 	struct trace_event_file *event_file = event_file_data(m->private);
 
-	if (t == SHOW_AVAILABLE_TRIGGERS) {
-		(*pos)++;
+	if (t == SHOW_AVAILABLE_TRIGGERS)
 		return NULL;
-	}
+
 	return seq_list_next(t, &event_file->triggers, pos);
 }
 
@@ -679,8 +678,6 @@ event_trigger_callback(struct event_command *cmd_ops,
 		goto out_free;
 
  out_reg:
-	/* Up the trigger_data count to make sure reg doesn't free it on failure */
-	event_trigger_init(trigger_ops, trigger_data);
 	ret = cmd_ops->reg(glob, trigger_ops, trigger_data, file);
 	/*
 	 * The above returns on success the # of functions enabled,
@@ -688,13 +685,11 @@ event_trigger_callback(struct event_command *cmd_ops,
 	 * Consider no functions a failure too.
 	 */
 	if (!ret) {
-		cmd_ops->unreg(glob, trigger_ops, trigger_data, file);
 		ret = -ENOENT;
-	} else if (ret > 0)
-		ret = 0;
-
-	/* Down the counter of trigger_data or free it if not used anymore */
-	event_trigger_free(trigger_ops, trigger_data);
+		goto out_free;
+	} else if (ret < 0)
+		goto out_free;
+	ret = 0;
  out:
 	return ret;
 
@@ -743,10 +738,8 @@ int set_trigger_filter(char *filter_str,
 
 	/* The filter is for the 'trigger' event, not the triggered event */
 	ret = create_event_filter(file->event_call, filter_str, false, &filter);
-	/*
-	 * If create_event_filter() fails, filter still needs to be freed.
-	 * Which the calling code will do with data->filter.
-	 */
+	if (ret)
+		goto out;
  assign:
 	tmp = rcu_access_pointer(data->filter);
 
@@ -1068,10 +1061,14 @@ register_snapshot_trigger(char *glob, struct event_trigger_ops *ops,
 			  struct event_trigger_data *data,
 			  struct trace_event_file *file)
 {
-	if (tracing_alloc_snapshot() != 0)
-		return 0;
+	int ret = register_trigger(glob, ops, data, file);
 
-	return register_trigger(glob, ops, data, file);
+	if (ret > 0 && tracing_alloc_snapshot() != 0) {
+		unregister_trigger(glob, ops, data, file);
+		ret = 0;
+	}
+
+	return ret;
 }
 
 static int
@@ -1388,9 +1385,6 @@ int event_enable_trigger_func(struct event_command *cmd_ops,
 		goto out;
 	}
 
-	/* Up the trigger_data count to make sure nothing frees it on failure */
-	event_trigger_init(trigger_ops, trigger_data);
-
 	if (trigger) {
 		number = strsep(&trigger, ":");
 
@@ -1441,7 +1435,6 @@ int event_enable_trigger_func(struct event_command *cmd_ops,
 		goto out_disable;
 	/* Just return zero, not the number of enabled functions */
 	ret = 0;
-	event_trigger_free(trigger_ops, trigger_data);
  out:
 	return ret;
 
@@ -1452,7 +1445,7 @@ int event_enable_trigger_func(struct event_command *cmd_ops,
  out_free:
 	if (cmd_ops->set_filter)
 		cmd_ops->set_filter(NULL, trigger_data, NULL);
-	event_trigger_free(trigger_ops, trigger_data);
+	kfree(trigger_data);
 	kfree(enable_data);
 	goto out;
 }
