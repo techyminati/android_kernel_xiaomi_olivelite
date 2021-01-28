@@ -58,15 +58,14 @@ obj-$(CONFIG_CXL_BASE)		+= cxl/
 obj-$(CONFIG_PANEL)             += panel.o
 obj-$(CONFIG_QPNP_MISC) 	+= qpnp-misc.o
 obj-$(CONFIG_FPR_FPC) 	+= fpr_FingerprintCard/
+obj-$(CONFIG_FINGERPRINT_GOODIX_GF3208) 	+= goodix/
 obj-$(CONFIG_MEMORY_STATE_TIME)	+= memory_state_time.o
 
 obj-$(CONFIG_UID_SYS_STATS)	+= uid_sys_stats.o
 obj-$(CONFIG_MEMORY_STATE_TIME)	+= memory_state_time.o
-obj-$(CONFIG_QCOM_XR_SMRTVWR_MISC) += qcom-xr-smrtvwr-misc.o
-obj-$(CONFIG_TUSB1064_XR_MISC) += tusb1064.o
-obj-$(CONFIG_VXR200_XR_MISC) += vxr7200.o
-
-
+obj-$(CONFIG_HQ_SYSFS_SUPPORT) 	+= hqsysfs/
+obj-$(CONFIG_MI_FS)             +=xiaomi_fs/
+obj-$(CONFIG_SIMTRAY_STATUS)    += simtray.o
 lkdtm-$(CONFIG_LKDTM)		+= lkdtm_core.o
 lkdtm-$(CONFIG_LKDTM)		+= lkdtm_bugs.o
 lkdtm-$(CONFIG_LKDTM)		+= lkdtm_heap.o
@@ -84,5 +83,3 @@ OBJCOPYFLAGS_lkdtm_rodata_objcopy.o := \
 targets += lkdtm_rodata.o lkdtm_rodata_objcopy.o
 $(obj)/lkdtm_rodata_objcopy.o: $(obj)/lkdtm_rodata.o FORCE
 	$(call if_changed,objcopy)
-
-obj-$(CONFIG_OKL4_LINK_SHBUF)    += okl4-link-shbuf.o
