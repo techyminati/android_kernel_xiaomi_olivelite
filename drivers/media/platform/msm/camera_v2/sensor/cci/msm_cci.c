@@ -1,4 +1,5 @@
 /* Copyright (c) 2012-2017, 2018, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2019 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,7 +24,6 @@
 #include "msm_camera_io_util.h"
 #include "msm_camera_dt_util.h"
 #include "cam_hw_ops.h"
-#include <media/adsp-shmem-device.h>
 
 #define V4L2_IDENT_CCI 50005
 #define CCI_I2C_QUEUE_0_SIZE 64
@@ -33,7 +33,7 @@
 #define CYCLES_PER_MICRO_SEC_DEFAULT 4915
 #define CCI_MAX_DELAY 1000000
 
-#define CCI_TIMEOUT msecs_to_jiffies(100)
+#define CCI_TIMEOUT msecs_to_jiffies(1000)
 
 /* TODO move this somewhere else */
 #define MSM_CCI_DRV_NAME "msm_cci"
@@ -1476,14 +1476,6 @@ static int32_t msm_cci_init(struct v4l2_subdev *sd,
 				cci_dev->cci_i2c_queue_info[i][j].
 				max_queue_size);
 		}
-	}
-
-
-	if (cci_dev->pdev->id == ADSP_CCI
-	&& adsp_shmem_get_state() != CAMERA_STATUS_END) {
-		/* Used by aDSP */
-		cci_dev->cci_state = CCI_STATE_ENABLED;
-		return 0;
 	}
 
 	cci_dev->cci_master_info[MASTER_0].reset_pending = TRUE;
