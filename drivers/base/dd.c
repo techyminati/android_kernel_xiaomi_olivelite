@@ -362,10 +362,7 @@ static int really_probe(struct device *dev, struct device_driver *drv)
 	atomic_inc(&probe_count);
 	pr_debug("bus: '%s': %s: probing driver %s with device %s\n",
 		 drv->bus->name, __func__, drv->name, dev_name(dev));
-	if (!list_empty(&dev->devres_head)) {
-		dev_crit(dev, "Resources present before probing\n");
-		return -EBUSY;
-	}
+	WARN_ON(!list_empty(&dev->devres_head));
 
 re_probe:
 	dev->driver = drv;
@@ -386,6 +383,14 @@ re_probe:
 		if (ret)
 			goto probe_failed;
 	}
+
+	/*
+	 * Ensure devices are listed in devices_kset in correct order
+	 * It's important to move Dev to the end of devices_kset before
+	 * calling .probe, because it could be recursive and parent Dev
+	 * should always go first
+	 */
+	devices_kset_move_last(dev);
 
 	if (dev->bus->probe) {
 		ret = dev->bus->probe(dev);
