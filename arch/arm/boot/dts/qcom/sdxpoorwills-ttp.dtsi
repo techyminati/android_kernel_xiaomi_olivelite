@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -10,18 +10,14 @@
  * GNU General Public License for more details.
  */
 
-/dts-v1/;
+#include "sdxpoorwills-mtp.dtsi"
 
-#include "sdxpoorwills-pcie-ep-mtp.dtsi"
-#include "sdxpoorwills-v2.dtsi"
-
-/ {
-	model = "Qualcomm Technologies, Inc. SDXPOORWILLS V2 PCIE-EP MTP";
-	compatible = "qcom,sdxpoorwills-mtp",
-		"qcom,sdxpoorwills", "qcom,mtp";
-	qcom,board-id = <8 0x105>;
+&vbus_detect {
+	status = "okay";
 };
 
-&blsp1_uart2b_hs {
+&usb {
 	status = "okay";
+	qcom,connector-type-uAB;
+	extcon = <0>, <0>, <0>, <&vbus_detect>;
 };
