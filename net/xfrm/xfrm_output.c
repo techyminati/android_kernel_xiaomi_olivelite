@@ -66,7 +66,8 @@ static int xfrm_output_one(struct sk_buff *skb, int err)
 			goto error_nolock;
 		}
 
-		skb->mark = xfrm_smark_get(skb->mark, x);
+		if (x->props.output_mark)
+			skb->mark = x->props.output_mark;
 
 		err = x->outer_mode->output(x, skb);
 		if (err) {
@@ -242,8 +243,7 @@ void xfrm_local_error(struct sk_buff *skb, int mtu)
 
 	if (skb->protocol == htons(ETH_P_IP))
 		proto = AF_INET;
-	else if (skb->protocol == htons(ETH_P_IPV6) &&
-		 skb->sk->sk_family == AF_INET6)
+	else if (skb->protocol == htons(ETH_P_IPV6))
 		proto = AF_INET6;
 	else
 		return;

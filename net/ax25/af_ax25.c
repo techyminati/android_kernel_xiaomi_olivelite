@@ -639,10 +639,8 @@ static int ax25_setsockopt(struct socket *sock, int level, int optname,
 		break;
 
 	case SO_BINDTODEVICE:
-		if (optlen > IFNAMSIZ - 1)
-			optlen = IFNAMSIZ - 1;
-
-		memset(devname, 0, sizeof(devname));
+		if (optlen > IFNAMSIZ)
+			optlen = IFNAMSIZ;
 
 		if (copy_from_user(devname, optval, optlen)) {
 			res = -EFAULT;
@@ -656,22 +654,15 @@ static int ax25_setsockopt(struct socket *sock, int level, int optname,
 			break;
 		}
 
-		rtnl_lock();
-		dev = __dev_get_by_name(&init_net, devname);
+		dev = dev_get_by_name(&init_net, devname);
 		if (!dev) {
-			rtnl_unlock();
 			res = -ENODEV;
 			break;
 		}
 
 		ax25->ax25_dev = ax25_dev_ax25dev(dev);
-		if (!ax25->ax25_dev) {
-			rtnl_unlock();
-			res = -ENODEV;
-			break;
-		}
 		ax25_fillin_cb(ax25, ax25->ax25_dev);
-		rtnl_unlock();
+		dev_put(dev);
 		break;
 
 	default:
@@ -861,8 +852,6 @@ static int ax25_create(struct net *net, struct socket *sock, int protocol,
 		break;
 
 	case SOCK_RAW:
-		if (!capable(CAP_NET_RAW))
-			return -EPERM;
 		break;
 	default:
 		return -ESOCKTNOSUPPORT;
