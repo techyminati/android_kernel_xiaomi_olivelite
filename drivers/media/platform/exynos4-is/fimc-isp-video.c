@@ -316,7 +316,7 @@ static int isp_video_release(struct file *file)
 		ivc->streaming = 0;
 	}
 
-	_vb2_fop_release(file, NULL);
+	vb2_fop_release(file);
 
 	if (v4l2_fh_is_singular_file(file)) {
 		fimc_pipeline_call(&ivc->ve, close);
@@ -384,17 +384,12 @@ static void __isp_video_try_fmt(struct fimc_isp *isp,
 				struct v4l2_pix_format_mplane *pixm,
 				const struct fimc_fmt **fmt)
 {
-	const struct fimc_fmt *__fmt;
-
-	__fmt = fimc_isp_find_format(&pixm->pixelformat, NULL, 2);
-
-	if (fmt)
-		*fmt = __fmt;
+	*fmt = fimc_isp_find_format(&pixm->pixelformat, NULL, 2);
 
 	pixm->colorspace = V4L2_COLORSPACE_SRGB;
 	pixm->field = V4L2_FIELD_NONE;
-	pixm->num_planes = __fmt->memplanes;
-	pixm->pixelformat = __fmt->fourcc;
+	pixm->num_planes = (*fmt)->memplanes;
+	pixm->pixelformat = (*fmt)->fourcc;
 	/*
 	 * TODO: double check with the docmentation these width/height
 	 * constraints are correct.

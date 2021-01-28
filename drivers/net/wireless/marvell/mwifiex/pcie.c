@@ -101,6 +101,7 @@ static int mwifiex_pcie_suspend(struct device *dev)
 {
 	struct mwifiex_adapter *adapter;
 	struct pcie_service_card *card;
+	int hs_actived;
 	struct pci_dev *pdev = to_pci_dev(dev);
 
 	if (pdev) {
@@ -116,15 +117,7 @@ static int mwifiex_pcie_suspend(struct device *dev)
 
 	adapter = card->adapter;
 
-	/* Enable the Host Sleep */
-	if (!mwifiex_enable_hs(adapter)) {
-		mwifiex_dbg(adapter, ERROR,
-			    "cmd: failed to suspend\n");
-		adapter->hs_enabling = false;
-		return -EFAULT;
-	}
-
-	flush_workqueue(adapter->workqueue);
+	hs_actived = mwifiex_enable_hs(adapter);
 
 	/* Indicate device suspended */
 	adapter->is_suspended = true;
@@ -632,11 +625,8 @@ static int mwifiex_pcie_init_evt_ring(struct mwifiex_adapter *adapter)
 		skb_put(skb, MAX_EVENT_SIZE);
 
 		if (mwifiex_map_pci_memory(adapter, skb, MAX_EVENT_SIZE,
-					   PCI_DMA_FROMDEVICE)) {
-			kfree_skb(skb);
-			kfree(card->evtbd_ring_vbase);
+					   PCI_DMA_FROMDEVICE))
 			return -1;
-		}
 
 		buf_pa = MWIFIEX_SKB_DMA_ADDR(skb);
 
@@ -976,10 +966,8 @@ static int mwifiex_pcie_alloc_cmdrsp_buf(struct mwifiex_adapter *adapter)
 	}
 	skb_put(skb, MWIFIEX_UPLD_SIZE);
 	if (mwifiex_map_pci_memory(adapter, skb, MWIFIEX_UPLD_SIZE,
-				   PCI_DMA_FROMDEVICE)) {
-		kfree_skb(skb);
+				   PCI_DMA_FROMDEVICE))
 		return -1;
-	}
 
 	card->cmdrsp_buf = skb;
 
@@ -1688,6 +1676,9 @@ static int mwifiex_pcie_process_cmd_complete(struct mwifiex_adapter *adapter)
 
 	if (!adapter->curr_cmd) {
 		if (adapter->ps_state == PS_STATE_SLEEP_CFM) {
+			mwifiex_process_sleep_confirm_resp(adapter, skb->data,
+							   skb->len);
+			mwifiex_pcie_enable_host_int(adapter);
 			if (mwifiex_write_reg(adapter,
 					      PCIE_CPU_INT_EVENT,
 					      CPU_INTR_SLEEP_CFM_DONE)) {
@@ -1700,9 +1691,6 @@ static int mwifiex_pcie_process_cmd_complete(struct mwifiex_adapter *adapter)
 			while (reg->sleep_cookie && (count++ < 10) &&
 			       mwifiex_pcie_ok_to_access_hw(adapter))
 				usleep_range(50, 60);
-			mwifiex_pcie_enable_host_int(adapter);
-			mwifiex_process_sleep_confirm_resp(adapter, skb->data,
-							   skb->len);
 		} else {
 			mwifiex_dbg(adapter, ERROR,
 				    "There is no command but got cmdrsp\n");
@@ -2340,8 +2328,6 @@ static int mwifiex_process_pcie_int(struct mwifiex_adapter *adapter)
 			/* Handle command response */
 			ret = mwifiex_pcie_process_cmd_complete(adapter);
 			if (ret)
-				return ret;
-			if (adapter->hs_activated)
 				return ret;
 		}
 

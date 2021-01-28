@@ -438,6 +438,7 @@ qcaspi_qca7k_sync(struct qcaspi *qca, int event)
 	u16 signature = 0;
 	u16 spi_config;
 	u16 wrbuf_space = 0;
+	static u16 reset_count;
 
 	if (event == QCASPI_EVENT_CPUON) {
 		/* Read signature twice, if not valid
@@ -490,13 +491,13 @@ qcaspi_qca7k_sync(struct qcaspi *qca, int event)
 
 		qca->sync = QCASPI_SYNC_RESET;
 		qca->stats.trig_reset++;
-		qca->reset_count = 0;
+		reset_count = 0;
 		break;
 	case QCASPI_SYNC_RESET:
-		qca->reset_count++;
+		reset_count++;
 		netdev_dbg(qca->net_dev, "sync: waiting for CPU on, count %u.\n",
-			   qca->reset_count);
-		if (qca->reset_count >= QCASPI_RESET_TIMEOUT) {
+			   reset_count);
+		if (reset_count >= QCASPI_RESET_TIMEOUT) {
 			/* reset did not seem to take place, try again */
 			qca->sync = QCASPI_SYNC_UNKNOWN;
 			qca->stats.reset_timeout++;
@@ -634,7 +635,7 @@ qcaspi_netdev_open(struct net_device *dev)
 		return ret;
 	}
 
-	/* SPI thread takes care of TX queue */
+	netif_start_queue(qca->net_dev);
 
 	return 0;
 }
@@ -738,9 +739,6 @@ qcaspi_netdev_tx_timeout(struct net_device *dev)
 	qca->net_dev->stats.tx_errors++;
 	/* Trigger tx queue flush and QCA7000 reset */
 	qca->sync = QCASPI_SYNC_UNKNOWN;
-
-	if (qca->spi_thread)
-		wake_up_process(qca->spi_thread);
 }
 
 static int
@@ -867,22 +865,22 @@ qca_spi_probe(struct spi_device *spi)
 
 	if ((qcaspi_clkspeed < QCASPI_CLK_SPEED_MIN) ||
 	    (qcaspi_clkspeed > QCASPI_CLK_SPEED_MAX)) {
-		dev_err(&spi->dev, "Invalid clkspeed: %d\n",
-			qcaspi_clkspeed);
+		dev_info(&spi->dev, "Invalid clkspeed: %d\n",
+			 qcaspi_clkspeed);
 		return -EINVAL;
 	}
 
 	if ((qcaspi_burst_len < QCASPI_BURST_LEN_MIN) ||
 	    (qcaspi_burst_len > QCASPI_BURST_LEN_MAX)) {
-		dev_err(&spi->dev, "Invalid burst len: %d\n",
-			qcaspi_burst_len);
+		dev_info(&spi->dev, "Invalid burst len: %d\n",
+			 qcaspi_burst_len);
 		return -EINVAL;
 	}
 
 	if ((qcaspi_pluggable < QCASPI_PLUGGABLE_MIN) ||
 	    (qcaspi_pluggable > QCASPI_PLUGGABLE_MAX)) {
-		dev_err(&spi->dev, "Invalid pluggable: %d\n",
-			qcaspi_pluggable);
+		dev_info(&spi->dev, "Invalid pluggable: %d\n",
+			 qcaspi_pluggable);
 		return -EINVAL;
 	}
 
@@ -943,8 +941,8 @@ qca_spi_probe(struct spi_device *spi)
 	}
 
 	if (register_netdev(qcaspi_devs)) {
-		dev_err(&spi->dev, "Unable to register net device %s\n",
-			qcaspi_devs->name);
+		dev_info(&spi->dev, "Unable to register net device %s\n",
+			 qcaspi_devs->name);
 		free_netdev(qcaspi_devs);
 		return -EFAULT;
 	}

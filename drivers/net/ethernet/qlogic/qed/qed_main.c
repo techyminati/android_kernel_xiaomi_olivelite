@@ -23,7 +23,6 @@
 #include <linux/vmalloc.h>
 #include <linux/qed/qed_if.h>
 #include <linux/qed/qed_ll2_if.h>
-#include <linux/crash_dump.h>
 
 #include "qed.h"
 #include "qed_sriov.h"
@@ -502,16 +501,8 @@ static irqreturn_t qed_single_int(int irq, void *dev_instance)
 		/* Fastpath interrupts */
 		for (j = 0; j < 64; j++) {
 			if ((0x2ULL << j) & status) {
-				struct qed_simd_fp_handler *p_handler =
-					&hwfn->simd_proto_handler[j];
-
-				if (p_handler->func)
-					p_handler->func(p_handler->token);
-				else
-					DP_NOTICE(hwfn,
-						  "Not calling fastpath handler as it is NULL [handler #%d, status 0x%llx]\n",
-						  j, status);
-
+				hwfn->simd_proto_handler[j].func(
+					hwfn->simd_proto_handler[j].token);
 				status &= ~(0x2ULL << j);
 				rc = IRQ_HANDLED;
 			}
@@ -709,14 +700,6 @@ static int qed_slowpath_setup_int(struct qed_dev *cdev,
 
 	/* We want a minimum of one slowpath and one fastpath vector per hwfn */
 	cdev->int_params.in.min_msix_cnt = cdev->num_hwfns * 2;
-
-	if (is_kdump_kernel()) {
-		DP_INFO(cdev,
-			"Kdump kernel: Limit the max number of requested MSI-X vectors to %hd\n",
-			cdev->int_params.in.min_msix_cnt);
-		cdev->int_params.in.num_vectors =
-			cdev->int_params.in.min_msix_cnt;
-	}
 
 	rc = qed_set_int_mode(cdev, false);
 	if (rc)  {
@@ -958,7 +941,7 @@ static int qed_slowpath_start(struct qed_dev *cdev,
 					      &drv_version);
 		if (rc) {
 			DP_NOTICE(cdev, "Failed sending drv version command\n");
-			goto err4;
+			return rc;
 		}
 	}
 
@@ -966,8 +949,6 @@ static int qed_slowpath_start(struct qed_dev *cdev,
 
 	return 0;
 
-err4:
-	qed_ll2_dealloc_if(cdev);
 err3:
 	qed_hw_stop(cdev);
 err2:
@@ -1397,9 +1378,9 @@ static int qed_drain(struct qed_dev *cdev)
 			return -EBUSY;
 		}
 		rc = qed_mcp_drain(hwfn, ptt);
-		qed_ptt_release(hwfn, ptt);
 		if (rc)
 			return rc;
+		qed_ptt_release(hwfn, ptt);
 	}
 
 	return 0;

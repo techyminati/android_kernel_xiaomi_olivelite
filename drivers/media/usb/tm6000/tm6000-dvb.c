@@ -111,7 +111,6 @@ static void tm6000_urb_received(struct urb *urb)
 			printk(KERN_ERR "tm6000:  error %s\n", __func__);
 			kfree(urb->transfer_buffer);
 			usb_free_urb(urb);
-			dev->dvb->bulk_urb = NULL;
 		}
 	}
 }
@@ -142,7 +141,6 @@ static int tm6000_start_stream(struct tm6000_core *dev)
 	dvb->bulk_urb->transfer_buffer = kzalloc(size, GFP_KERNEL);
 	if (dvb->bulk_urb->transfer_buffer == NULL) {
 		usb_free_urb(dvb->bulk_urb);
-		dvb->bulk_urb = NULL;
 		printk(KERN_ERR "tm6000: couldn't allocate transfer buffer!\n");
 		return -ENOMEM;
 	}
@@ -170,7 +168,6 @@ static int tm6000_start_stream(struct tm6000_core *dev)
 
 		kfree(dvb->bulk_urb->transfer_buffer);
 		usb_free_urb(dvb->bulk_urb);
-		dvb->bulk_urb = NULL;
 		return ret;
 	}
 
@@ -276,11 +273,6 @@ static int register_dvb(struct tm6000_core *dev)
 
 	ret = dvb_register_adapter(&dvb->adapter, "Trident TVMaster 6000 DVB-T",
 					THIS_MODULE, &dev->udev->dev, adapter_nr);
-	if (ret < 0) {
-		pr_err("tm6000: couldn't register the adapter!\n");
-		goto err;
-	}
-
 	dvb->adapter.priv = dev;
 
 	if (dvb->frontend) {

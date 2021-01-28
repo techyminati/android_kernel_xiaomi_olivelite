@@ -303,12 +303,10 @@ int pwmchip_add_with_polarity(struct pwm_chip *chip,
 	if (IS_ENABLED(CONFIG_OF))
 		of_pwmchip_add(chip);
 
+	pwmchip_sysfs_export(chip);
+
 out:
 	mutex_unlock(&pwm_lock);
-
-	if (!ret)
-		pwmchip_sysfs_export(chip);
-
 	return ret;
 }
 EXPORT_SYMBOL_GPL(pwmchip_add_with_polarity);
@@ -342,7 +340,7 @@ int pwmchip_remove(struct pwm_chip *chip)
 	unsigned int i;
 	int ret = 0;
 
-	pwmchip_sysfs_unexport(chip);
+	pwmchip_sysfs_unexport_children(chip);
 
 	mutex_lock(&pwm_lock);
 
@@ -361,6 +359,8 @@ int pwmchip_remove(struct pwm_chip *chip)
 		of_pwmchip_remove(chip);
 
 	free_pwms(chip);
+
+	pwmchip_sysfs_unexport(chip);
 
 out:
 	mutex_unlock(&pwm_lock);
@@ -526,19 +526,9 @@ int pwm_apply_state(struct pwm_device *pwm, struct pwm_state *state)
 
 		if (state->period != pwm->state.period ||
 		    state->duty_cycle != pwm->state.duty_cycle) {
-			if (pwm->chip->ops->config_extend) {
-				err = pwm->chip->ops->config_extend(pwm->chip,
-						pwm, state->duty_cycle,
-						state->period);
-			} else {
-				if (state->period > UINT_MAX)
-					pr_warn("period %llu duty_cycle %llu will be truncated\n",
-							state->period,
-							state->duty_cycle);
-				err = pwm->chip->ops->config(pwm->chip, pwm,
-						state->duty_cycle,
-						state->period);
-			}
+			err = pwm->chip->ops->config(pwm->chip, pwm,
+						     state->duty_cycle,
+						     state->period);
 			if (err)
 				return err;
 
@@ -894,7 +884,6 @@ void pwm_put(struct pwm_device *pwm)
 	if (pwm->chip->ops->free)
 		pwm->chip->ops->free(pwm->chip, pwm);
 
-	pwm_set_chip_data(pwm, NULL);
 	pwm->label = NULL;
 
 	module_put(pwm->chip->ops->owner);
@@ -1028,8 +1017,8 @@ static void pwm_dbg_show(struct pwm_chip *chip, struct seq_file *s)
 		if (state.enabled)
 			seq_puts(s, " enabled");
 
-		seq_printf(s, " period: %llu ns", state.period);
-		seq_printf(s, " duty: %llu ns", state.duty_cycle);
+		seq_printf(s, " period: %u ns", state.period);
+		seq_printf(s, " duty: %u ns", state.duty_cycle);
 		seq_printf(s, " polarity: %s",
 			   state.polarity ? "inverse" : "normal");
 
