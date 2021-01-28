@@ -1,4 +1,5 @@
-/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2019 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -35,6 +36,7 @@
 #include "mdss_debug.h"
 #include "mdss_dsi_phy.h"
 #include "mdss_dba_utils.h"
+#include <linux/hqsysfs.h>
 
 #define XO_CLK_RATE	19200000
 #define CMDLINE_DSI_CTL_NUM_STRING_LEN 2
@@ -382,7 +384,7 @@ static int mdss_dsi_panel_power_off(struct mdss_panel_data *pdata)
 		pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
 		ret = 0;
 	}
-
+	msleep_interruptible(2);
 	if (gpio_is_valid(ctrl_pdata->vdd_ext_gpio)) {
 		ret = gpio_direction_output(
 			ctrl_pdata->vdd_ext_gpio, 0);
@@ -978,7 +980,7 @@ static ssize_t mdss_dsi_cmd_write(struct file *file, const char __user *p,
 {
 	struct buf_data *pcmds = file->private_data;
 	ssize_t ret = 0;
-	unsigned int blen = 0;
+	int blen = 0;
 	char *string_buf;
 
 	mutex_lock(&pcmds->dbg_mutex);
@@ -990,11 +992,6 @@ static ssize_t mdss_dsi_cmd_write(struct file *file, const char __user *p,
 
 	/* Allocate memory for the received string */
 	blen = count + (pcmds->sblen);
-	if (blen > U32_MAX - 1) {
-		mutex_unlock(&pcmds->dbg_mutex);
-		return -EINVAL;
-	}
-
 	string_buf = krealloc(pcmds->string_buf, blen + 1, GFP_KERNEL);
 	if (!string_buf) {
 		pr_err("%s: Failed to allocate memory\n", __func__);
@@ -1002,7 +999,6 @@ static ssize_t mdss_dsi_cmd_write(struct file *file, const char __user *p,
 		return -ENOMEM;
 	}
 
-	pcmds->string_buf = string_buf;
 	/* Writing in batches is possible */
 	ret = simple_write_to_buffer(string_buf, blen, ppos, p, count);
 	if (ret < 0) {
@@ -1012,6 +1008,7 @@ static ssize_t mdss_dsi_cmd_write(struct file *file, const char __user *p,
 	}
 
 	string_buf[ret] = '\0';
+	pcmds->string_buf = string_buf;
 	pcmds->sblen = count;
 	mutex_unlock(&pcmds->dbg_mutex);
 	return ret;
@@ -1020,8 +1017,7 @@ static ssize_t mdss_dsi_cmd_write(struct file *file, const char __user *p,
 static int mdss_dsi_cmd_flush(struct file *file, fl_owner_t id)
 {
 	struct buf_data *pcmds = file->private_data;
-	unsigned int len;
-	int blen, i;
+	int blen, len, i;
 	char *buf, *bufp, *bp;
 	struct dsi_ctrl_hdr *dchdr;
 
@@ -1065,7 +1061,7 @@ static int mdss_dsi_cmd_flush(struct file *file, fl_owner_t id)
 	while (len >= sizeof(*dchdr)) {
 		dchdr = (struct dsi_ctrl_hdr *)bp;
 		dchdr->dlen = ntohs(dchdr->dlen);
-		if (dchdr->dlen > (len - sizeof(*dchdr)) || dchdr->dlen < 0) {
+		if (dchdr->dlen > len || dchdr->dlen < 0) {
 			pr_err("%s: dtsi cmd=%x error, len=%d\n",
 				__func__, dchdr->dtype, dchdr->dlen);
 			kfree(buf);
@@ -1957,9 +1953,6 @@ static void __mdss_dsi_update_video_mode_total(struct mdss_panel_data *pdata,
 		return;
 	}
 
-	if (ctrl_pdata->timing_db_mode)
-		MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x1e8, 0x1);
-
 	vsync_period =
 		mdss_panel_get_vtotal(&pdata->panel_info);
 	hsync_period =
@@ -1969,13 +1962,23 @@ static void __mdss_dsi_update_video_mode_total(struct mdss_panel_data *pdata,
 	new_dsi_v_total =
 		((vsync_period - 1) << 16) | (hsync_period - 1);
 
-	MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x2C, new_dsi_v_total);
+	MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x2C,
+			(current_dsi_v_total | 0x8000000));
+	if (new_dsi_v_total & 0x8000000) {
+		MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x2C,
+				new_dsi_v_total);
+	} else {
+		MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x2C,
+				(new_dsi_v_total | 0x8000000));
+		MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x2C,
+				(new_dsi_v_total & 0x7ffffff));
+	}
 
 	if (ctrl_pdata->timing_db_mode)
 		MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x1e4, 0x1);
 
-	pr_debug("%s new_fps:%d new_vtotal:0x%X cur_vtotal:0x%X frame_rate:%d\n",
-			__func__, new_fps, new_dsi_v_total, current_dsi_v_total,
+	pr_debug("%s new_fps:%d vsync:%d hsync:%d frame_rate:%d\n",
+			__func__, new_fps, vsync_period, hsync_period,
 			ctrl_pdata->panel_data.panel_info.mipi.frame_rate);
 
 	ctrl_pdata->panel_data.panel_info.current_fps = new_fps;
@@ -2748,8 +2751,10 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 							pdata);
 		break;
 	case MDSS_EVENT_UNBLANK:
+		pr_err("lcd-time event unblank begin!\n");
 		if (ctrl_pdata->on_cmds.link_state == DSI_LP_MODE)
 			rc = mdss_dsi_unblank(pdata);
+		pr_err("lcd-time event unblank end!\n");
 		break;
 	case MDSS_EVENT_POST_PANEL_ON:
 		rc = mdss_dsi_post_panel_on(pdata);
@@ -2761,9 +2766,11 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		pdata->panel_info.esd_rdy = true;
 		break;
 	case MDSS_EVENT_BLANK:
+		pr_err("lcd-time event blank begin!\n");
 		power_state = (int) (unsigned long) arg;
 		if (ctrl_pdata->off_cmds.link_state == DSI_HS_MODE)
 			rc = mdss_dsi_blank(pdata, power_state);
+		pr_err("lcd-time event blank end!\n");
 		break;
 	case MDSS_EVENT_PANEL_OFF:
 		power_state = (int) (unsigned long) arg;
@@ -2925,6 +2932,19 @@ static struct device_node *mdss_dsi_pref_prim_panel(
  *
  * returns pointer to panel node on success, NULL on error.
  */
+
+#ifdef CONFIG_WPONIT_ADJUST_FUN
+u32 white_point_num_x;
+u32 white_point_num_y;
+u32 white_point_num_r;
+u32 white_point_num_g;
+u32 white_point_num_b;
+#endif
+
+#if defined(PROJECT_OLIVE) || defined(PROJECT_OLIVELITE)
+char tp_lockdown_info[40] = {0};
+#endif
+
 static struct device_node *mdss_dsi_find_panel_of_node(
 		struct platform_device *pdev, char *panel_cfg)
 {
@@ -2934,6 +2954,14 @@ static struct device_node *mdss_dsi_find_panel_of_node(
 	char ctrl_id_stream[3] =  "0:";
 	char *str1 = NULL, *str2 = NULL, *override_cfg = NULL;
 	char cfg_np_name[MDSS_MAX_PANEL_LEN] = "";
+#ifdef CONFIG_WPONIT_ADJUST_FUN
+	char *wponit_str;
+#endif
+
+#if defined(PROJECT_OLIVE) || defined(PROJECT_OLIVELITE)
+	char *tplock_str;
+#endif
+
 	struct device_node *dsi_pan_node = NULL, *mdss_node = NULL;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = platform_get_drvdata(pdev);
 	struct mdss_panel_info *pinfo = &ctrl_pdata->panel_data.panel_info;
@@ -2946,6 +2974,31 @@ static struct device_node *mdss_dsi_find_panel_of_node(
 			 __func__, __LINE__);
 		goto end;
 	} else {
+#ifdef CONFIG_WPONIT_ADJUST_FUN
+		wponit_str = strnstr(panel_cfg, ":wpoint=", len);
+		if (!wponit_str) {
+			pr_err("%s:[white point calibration] white point is not present in %s\n",
+					__func__, panel_cfg);
+		} else {
+			white_point_num_x = ((*(wponit_str +  8)) - '0') * 100 + ((*(wponit_str +  9) - '0'))*10 + (*(wponit_str +  10) - '0');
+			white_point_num_y = ((*(wponit_str +  11)) - '0') * 100 + ((*(wponit_str +  12) - '0'))*10 + (*(wponit_str +  13) - '0');
+			pr_err("[white point calibration] white_point_num_x = %d,white_point_num_y = %d\n", white_point_num_x, white_point_num_y);
+		}
+#endif
+
+#if defined(PROJECT_OLIVE) || defined(PROJECT_OLIVELITE)
+		tplock_str = strnstr(panel_cfg, ":tplock=", len);
+		if (!tplock_str) {
+			pr_err("%s:[tp lockdown info] tp lockdown info is not present in %s\n",
+					__func__, panel_cfg);
+		} else {
+			snprintf(tp_lockdown_info, sizeof (tp_lockdown_info), "%c%c%c%c%c%c%c%c%0x%c%c%c%c%c%c%c", \
+				tplock_str[8], tplock_str[9], tplock_str[10], tplock_str[11], tplock_str[12], tplock_str[13], tplock_str[14], tplock_str[15], \
+				(tplock_str[16] - '0'), tplock_str[17], tplock_str[18], tplock_str[19], tplock_str[20], tplock_str[21], tplock_str[22], tplock_str[23]);
+			pr_err("[tp lockdown info] tp_lockdown_info = %s\n", tp_lockdown_info);
+		}
+#endif
+
 		/* check if any override parameters are set */
 		pinfo->sim_panel_mode = 0;
 		override_cfg = strnstr(panel_cfg, "#" OVERRIDE_CFG, len);
@@ -2993,7 +3046,48 @@ static struct device_node *mdss_dsi_find_panel_of_node(
 			__func__, panel_cfg, panel_name);
 		if (!strcmp(panel_name, NONE_PANEL))
 			goto exit;
-
+		if (!strcmp(panel_name, "qcom,mdss_dsi_ili9881c_hdplus_video")) {
+			hq_regiser_hw_info(HWID_LCM, "oncell,vendor:ebbg,IC:ili9881c(ilitek)");
+		} else if (!strcmp(panel_name, "qcom,mdss_dsi_ili9881c_hdplus_video_c3e")) {
+			hq_regiser_hw_info(HWID_LCM, "oncell,vendor:ebbg,IC:ili9881c(ilitek)");
+#ifdef CONFIG_WPONIT_ADJUST_FUN
+			white_point_num_r = 625329;
+			white_point_num_g = 307618;
+			white_point_num_b = 169047;
+#endif
+		} else if (!strcmp(panel_name, "qcom,mdss_dsi_ili9881d_hdplus_video_c3e")) {
+			hq_regiser_hw_info(HWID_LCM, "oncell,vendor:ebbg,IC:ili9881d(ilitek)");
+#ifdef CONFIG_WPONIT_ADJUST_FUN
+			white_point_num_r = 627328;
+			white_point_num_g = 302614;
+			white_point_num_b = 163052;
+#endif
+		} else if (!strcmp(panel_name, "qcom,mdss_dsi_jd9365z_hdplus_video_c3e")) {
+			hq_regiser_hw_info(HWID_LCM, "oncell,vendor:holitech,IC:jd9365z(fitipower)");
+#ifdef CONFIG_WPONIT_ADJUST_FUN
+			white_point_num_r = 653334;
+			white_point_num_g = 309625;
+			white_point_num_b = 150050;
+#endif
+		} else if (!strcmp(panel_name, "qcom,mdss_dsi_ili9881h_hdplus_video_c3i")) {
+			hq_regiser_hw_info(HWID_LCM, "incell,vendor:TIANMA,IC:ili9881h(ilitek)");
+#ifdef CONFIG_WPONIT_ADJUST_FUN
+			white_point_num_r = 640339;
+			white_point_num_g = 319605;
+			white_point_num_b = 147057;
+#endif
+		} else if (!strcmp(panel_name, "qcom,mdss_dsi_nvt36525b_hdplus_video_c3i")) {
+			hq_regiser_hw_info(HWID_LCM, "incell,vendor:Truly,IC:nvt36525b(novatek)");
+#ifdef CONFIG_WPONIT_ADJUST_FUN
+			white_point_num_r = 639336;
+			white_point_num_g = 316607;
+			white_point_num_b = 157060;
+#endif
+		} else if (!strcmp(panel_name, "qcom,mdss_dsi_FT8006S_hdplus_video_c3i")) {
+			hq_regiser_hw_info(HWID_LCM, "incell,vendor:ebbg,IC:ft8006s(focal)");
+		} else {
+			hq_regiser_hw_info(HWID_LCM, "UNKNOWN PANEL");
+		}
 		mdss_node = of_parse_phandle(pdev->dev.of_node,
 			"qcom,mdss-mdp", 0);
 		if (!mdss_node) {
@@ -3524,10 +3618,6 @@ static int mdss_dsi_parse_dt_params(struct platform_device *pdev,
 	sdata->cmd_clk_ln_recovery_en =
 		of_property_read_bool(pdev->dev.of_node,
 		"qcom,dsi-clk-ln-recovery");
-
-	sdata->skip_clamp =
-		of_property_read_bool(pdev->dev.of_node,
-		"qcom,mdss-skip-clamp");
 
 	return 0;
 }
